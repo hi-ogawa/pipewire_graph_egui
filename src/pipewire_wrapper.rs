@@ -1,5 +1,8 @@
 use std::{
-    sync::mpsc::{self, Receiver, Sender},
+    sync::{
+        mpsc::{self, Receiver, Sender},
+        Arc, Mutex,
+    },
     thread::JoinHandle,
 };
 
@@ -10,7 +13,13 @@ use crate::channel::ChannelMessage;
 pub struct PipewireWrapper {
     pub channel_sender: Sender<ChannelMessage>,
     pub channel_receiver: Receiver<ChannelMessage>,
+    pub state: Arc<Mutex<PipewireState>>, // TODO: ui thread locks too much?
     thread_handle: Option<JoinHandle<()>>,
+}
+
+#[derive(Default)]
+pub struct PipewireState {
+    pub core_info: Option<String>,
 }
 
 impl PipewireWrapper {
@@ -20,6 +29,9 @@ impl PipewireWrapper {
         // TODO: bidirection?
         let (ui_sender, pw_receiver) = mpsc::channel::<ChannelMessage>();
         let (pw_sender, ui_receiver) = mpsc::channel::<ChannelMessage>();
+
+        let state = Arc::new(Mutex::new(PipewireState::default()));
+        let state_clone = state.clone();
 
         let thread_handle = std::thread::spawn(move || {
             // TODO: error handling
@@ -43,10 +55,12 @@ impl PipewireWrapper {
             });
 
             // core event handler
+            let state_clone = state.clone();
             let _must_use = core
                 .add_listener_local()
                 .info(move |core_info| {
                     dbg!(core_info);
+                    state_clone.lock().unwrap().core_info = Some(format!("{:#?}", core_info));
                     pw_sender
                         .send(ChannelMessage::PipewireMainLoopReady)
                         .unwrap();
@@ -76,6 +90,7 @@ impl PipewireWrapper {
         Self {
             channel_sender: ui_sender,
             channel_receiver: ui_receiver,
+            state: state_clone,
             thread_handle: Some(thread_handle),
         }
     }

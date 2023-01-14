@@ -366,6 +366,12 @@ pub struct NodeGraphExample {
     user_state: MyGraphState,
 
     pipewire_wrapper: PipewireWrapper,
+
+    extra_state: ExtraState, // what...
+}
+
+struct ExtraState {
+    core_info_window_open: bool,
 }
 
 const PERSISTENCE_KEY: &str = env!("CARGO_PKG_NAME");
@@ -379,6 +385,9 @@ impl NodeGraphExample {
                 .unwrap_or_default(),
             user_state: Default::default(),
             pipewire_wrapper: PipewireWrapper::new(),
+            extra_state: ExtraState {
+                core_info_window_open: true,
+            },
         }
     }
 }
@@ -405,11 +414,46 @@ impl eframe::App for NodeGraphExample {
                 .unwrap();
         }
 
+        //
+        // menu bar
+        //
         egui::TopBottomPanel::top("top").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
                 egui::widgets::global_dark_light_mode_switch(ui);
+                ui.toggle_value(&mut self.extra_state.core_info_window_open, "Core Info")
+                    .clicked();
             });
         });
+
+        //
+        // core_info window
+        //
+        egui::Window::new("Core Info")
+            .open(&mut self.extra_state.core_info_window_open)
+            .collapsible(false)
+            .default_width(500.0)
+            .show(ctx, |ui| {
+                if let Ok(state) = self.pipewire_wrapper.state.lock().as_deref() {
+                    if let Some(core_info) = &state.core_info {
+                        egui::ScrollArea::both().show(ui, |ui| {
+                            ui.add(
+                                egui::TextEdit::multiline(&mut core_info.as_str())
+                                    .font(egui::TextStyle::Monospace)
+                                    .desired_width(f32::INFINITY),
+                            );
+                        });
+                    } else {
+                        ui.label("(initializing..)");
+                    }
+                } else {
+                    ui.label("(error)");
+                }
+            });
+
+        //
+        // node graph
+        //
+
         let graph_response = egui::CentralPanel::default()
             .show(ctx, |ui| {
                 self.state
