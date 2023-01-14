@@ -1,0 +1,156 @@
+stages:
+  - container
+  - lint
+  - test
+  - extras
+  - deploy
+
+variables:
+  FDO_UPSTREAM_REPO: 'pipewire/pipewire-rs'
+
+# ci-templates as of Jan 11th 2022
+.templates_sha: &templates_sha 34039cd573a2df832d465bc9e4c5f543571f5241
+
+include:
+  - project: 'freedesktop/ci-templates'
+    ref: *templates_sha
+    file: '/templates/fedora.yml'
+
+.fedora:
+  variables:
+    # Update this tag when you want to trigger a rebuild
+    FDO_DISTRIBUTION_TAG: '2022-11-01.0'
+    FDO_DISTRIBUTION_VERSION: '36'
+    # wget: required by install-rust.sh
+    # openssl-devel, perl-FindBin: required to build cargo tools
+    # make: required to build cargo tools
+    # clang-devel: required by rust-bindgen
+    FDO_DISTRIBUTION_PACKAGES: >-
+      pipewire-devel
+      wget
+      openssl-devel
+      perl-FindBin
+      make
+      clang-devel
+      git
+      python3-pip
+      python3-setuptools
+    FDO_DISTRIBUTION_EXEC: >-
+      pip3 install git+http://gitlab.freedesktop.org/freedesktop/ci-templates &&
+      bash ci/install-rust.sh stable
+  before_script:
+    - source ./ci/env.sh
+    - mkdir .cargo && echo -e "[net]\ngit-fetch-with-cli = true" > .cargo/config
+
+.build:
+  before_script:
+    - source ./ci/env.sh
+
+container_fedora:
+  extends:
+    - .fedora
+    - .fdo.container-build@fedora
+  stage: container
+
+rustfmt:
+  extends:
+    - .fedora
+    - .fdo.distribution-image@fedora
+  stage: lint
+  script:
+    - cargo fmt --version
+    - cargo fmt -- --color=always --check
+
+check commits:
+  extends:
+    - .fedora
+    - .fdo.distribution-image@fedora
+  stage: lint
+  script:
+    - ci-fairy check-commits --textwidth 0 --no-signed-off-by --branch main
+
+test-stable:
+  extends:
+    - .fedora
+    - .fdo.distribution-image@fedora
+    - .build
+  stage: test
+  script:
+    - rustc --version
+    - cargo build --color=always --all-targets
+    - cargo test --color=always
+
+miri:
+  extends:
+    - .fedora
+    - .fdo.distribution-image@fedora
+    - .build
+  stage: test
+  script:
+    - rustup default $(cat /nightly-version)
+    - rustc --version
+    # miri does not support foreign function calls so we can't use it with code calling ffi.
+    # Run it only on libspa as this crate is mostly a pure Rust re-implementation.
+    - cargo miri test --package libspa
+
+rustdoc:
+  extends:
+    - .fedora
+    - .fdo.distribution-image@fedora
+    - .build
+  stage: extras
+  variables:
+    RUSTDOCFLAGS: '-Dwarnings'
+  script:
+    - rustdoc --version
+    - cargo doc -p pipewire --no-deps
+    - cargo doc -p libspa --no-deps
+
+clippy:
+  extends:
+    - .fedora
+    - .fdo.distribution-image@fedora
+    - .build
+  stage: extras
+  script:
+    - cargo clippy --version
+    - cargo clippy --color=always --all-targets -- -D warnings
+
+deny:
+  extends:
+    - .fedora
+    - .fdo.distribution-image@fedora
+  stage: extras
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - if: '$CI_COMMIT_BRANCH == "release"'
+  script:
+    - cargo deny check
+
+outdated:
+  extends:
+    - .fedora
+    - .fdo.distribution-image@fedora
+  stage: extras
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - if: '$CI_COMMIT_BRANCH == "release"'
+  script:
+    - cargo outdated --root-deps-only --exit-code 1 -v
+
+pages:
+  extends:
+    - .fedora
+    - .fdo.distribution-image@fedora
+    - .build
+  stage: 'deploy'
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $PIPELINE_BRANCH != $CI_DEFAULT_BRANCH
+      when: never
+  script:
+    - cargo doc --color=always
+    - mv target/doc public/
+  artifacts:
+    paths:
+      - 'public'
