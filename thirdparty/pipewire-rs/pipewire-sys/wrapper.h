@@ -1,3 +1,5 @@
+// https://gitlab.freedesktop.org/pipewire/pipewire/-/issues/2952
+#define PW_ENABLE_DEPRECATED
 #include <pipewire/pipewire.h>
 #include <pipewire/extensions/client-node.h>
 #include <pipewire/extensions/metadata.h>
