@@ -1,0 +1,10 @@
+[workspace]
+  
+members = [
+  "libspa-sys",
+  "libspa",
+  "pipewire-sys",
+  "pipewire",
+]
+
+exclude = [ "tools" ]
