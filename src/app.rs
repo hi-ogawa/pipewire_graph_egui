@@ -1,14 +1,11 @@
-use std::{
-    borrow::Cow,
-    collections::HashMap,
-    sync::mpsc::{self, Receiver, Sender},
-    thread::{self, JoinHandle},
-};
+use std::{borrow::Cow, collections::HashMap};
 
 use eframe::egui::{self, DragValue, TextStyle};
 use egui_node_graph::*;
 
 use serde::{Deserialize, Serialize};
+
+use crate::{channel::ChannelMessage, pipewire_wrapper::PipewireWrapper};
 
 // ========= First, define your user data types =============
 
@@ -368,103 +365,27 @@ pub struct NodeGraphExample {
 
     user_state: MyGraphState,
 
-    // TODO: bidirectional?
-    ui_to_pw_sender: Sender<Message>,
-    pw_to_ui_receiver: Receiver<Message>,
-
-    pipewire_thread_handle: Option<JoinHandle<()>>,
+    pipewire_wrapper: PipewireWrapper,
 }
 
 const PERSISTENCE_KEY: &str = env!("CARGO_PKG_NAME");
 
-#[derive(Copy, Clone, Debug)]
-enum Message {
-    PipewireMainLoopReady,
-    PipewireMainLoopStopRequest,
-}
-
 impl NodeGraphExample {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        pipewire::init();
-        let (ui_to_pw_sender, ui_to_pw_receiver) = mpsc::channel::<Message>();
-        let (pw_to_ui_sender, pw_to_ui_receiver) = mpsc::channel::<Message>();
-
-        // TODO: refactor pipewire thread (maybe `struct PipewireWrapper` or something)
-        let pipewire_thread_handle = thread::spawn(move || {
-            // TODO: error handling
-            let main_loop = pipewire::MainLoop::new().unwrap();
-            let context = pipewire::Context::new(&main_loop).unwrap();
-            let core = context.connect(None).unwrap();
-            let registry = core.get_registry().unwrap();
-
-            // idle handler
-            // TODO: is idle callback appropriate for handling message from UI?
-            let main_loop_weak = main_loop.downgrade();
-            let _must_use = main_loop.add_idle(true, move || {
-                while let Ok(message) = ui_to_pw_receiver.try_recv() {
-                    match message {
-                        Message::PipewireMainLoopStopRequest => {
-                            main_loop_weak.upgrade().unwrap().quit();
-                        }
-                        _ => {}
-                    }
-                }
-            });
-
-            // core event handler
-            let _must_use = core
-                .add_listener_local()
-                .info(move |core_info| {
-                    dbg!(core_info);
-                    pw_to_ui_sender
-                        .send(Message::PipewireMainLoopReady)
-                        .unwrap();
-                })
-                .done(|done_id, seq| {
-                    dbg!(done_id, seq);
-                })
-                .error(|error_id, seq, res, message| {
-                    dbg!(error_id, seq, res, message);
-                })
-                .register();
-
-            // registry event handler
-            let _must_use = registry
-                .add_listener_local()
-                .global(|global_object| {
-                    dbg!(global_object);
-                })
-                .global_remove(|global_remove_id| {
-                    dbg!(global_remove_id);
-                })
-                .register();
-
-            main_loop.run(); // blocking
-        });
-
         Self {
             state: cc
                 .storage
                 .and_then(|storage| eframe::get_value(storage, PERSISTENCE_KEY))
                 .unwrap_or_default(),
             user_state: Default::default(),
-            ui_to_pw_sender,
-            pw_to_ui_receiver,
-            pipewire_thread_handle: Some(pipewire_thread_handle),
+            pipewire_wrapper: PipewireWrapper::new(),
         }
     }
 }
 
 impl eframe::App for NodeGraphExample {
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        self.ui_to_pw_sender
-            .send(Message::PipewireMainLoopStopRequest)
-            .unwrap();
-        // TODO: handle with timeout in case of pipewire thread halting?
-        self.pipewire_thread_handle.take().unwrap().join().unwrap();
-        unsafe {
-            pipewire::deinit();
-        }
+        self.pipewire_wrapper.quit().unwrap();
     }
 
     /// If the persistence function is enabled,
@@ -476,8 +397,12 @@ impl eframe::App for NodeGraphExample {
     /// Called each time the UI needs repainting, which may be many times per second.
     /// Put your widgets into a `SidePanel`, `TopPanel`, `CentralPanel`, `Window` or `Area`.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        while let Ok(message) = self.pw_to_ui_receiver.try_recv() {
+        while let Ok(message) = self.pipewire_wrapper.channel_receiver.try_recv() {
             dbg!(message);
+            self.pipewire_wrapper
+                .channel_sender
+                .send(ChannelMessage::Noop)
+                .unwrap();
         }
 
         egui::TopBottomPanel::top("top").show(ctx, |ui| {
