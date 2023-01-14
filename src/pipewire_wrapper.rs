@@ -5,6 +5,7 @@ use std::{
         Arc, Mutex,
     },
     thread::JoinHandle,
+    time::Duration,
 };
 
 use anyhow::{Context, Result};
@@ -54,12 +55,13 @@ impl PipewireWrapper {
             //   https://gitlab.freedesktop.org/pipewire/pipewire/-/blob/792defde27e22673bd42b0584e875c78311e900b/src/tools/pw-cli.c#L1530
             let factory_name_map: Arc<Mutex<HashMap<String, String>>> = Default::default();
 
-            // idle handler
-            // TODO: is idle callback appropriate for handling message from UI?
+            // channel message handler via `add_timer`
+            // (`add_idle` looks too expensive)
+            // (it's probably possible to use `add_event` by using one more thread proxying events)
             let main_loop_weak = main_loop.downgrade();
             let core_ = core.clone();
             let factory_name_map_ = factory_name_map.clone();
-            let _must_use = main_loop.add_idle(true, move || {
+            let timer_source = main_loop.add_timer(move |_| {
                 while let Ok(message) = pw_receiver.try_recv() {
                     match message {
                         ChannelMessage::PipewireMainLoopStopRequest => {
@@ -99,6 +101,13 @@ impl PipewireWrapper {
                     }
                 }
             });
+            timer_source
+                .update_timer(
+                    Some(Duration::from_millis(1)),
+                    Some(Duration::from_millis(100)),
+                )
+                .into_result()
+                .unwrap();
 
             // core event handler
             let state_ = state.clone();
