@@ -1,6 +1,7 @@
 use std::{borrow::Cow, collections::HashMap};
 
 use eframe::egui::{self, DragValue, TextStyle};
+use egui_extras::{Size, TableBuilder};
 use egui_node_graph::*;
 
 use serde::{Deserialize, Serialize};
@@ -370,8 +371,12 @@ pub struct NodeGraphExample {
     extra_state: ExtraState, // what...
 }
 
+#[derive(Default)]
 struct ExtraState {
     core_info_window_open: bool,
+    debug_window_open: bool,
+    debug_input: String,
+    debug_output: String,
 }
 
 const PERSISTENCE_KEY: &str = env!("CARGO_PKG_NAME");
@@ -385,9 +390,7 @@ impl NodeGraphExample {
                 .unwrap_or_default(),
             user_state: Default::default(),
             pipewire_wrapper: PipewireWrapper::new(),
-            extra_state: ExtraState {
-                core_info_window_open: true,
-            },
+            extra_state: ExtraState::default(),
         }
     }
 }
@@ -408,26 +411,24 @@ impl eframe::App for NodeGraphExample {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         while let Ok(message) = self.pipewire_wrapper.channel_receiver.try_recv() {
             dbg!(message);
-            self.pipewire_wrapper
-                .channel_sender
-                .send(ChannelMessage::Noop)
-                .unwrap();
         }
 
         //
         // menu bar
         //
+
         egui::TopBottomPanel::top("top").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
                 egui::widgets::global_dark_light_mode_switch(ui);
-                ui.toggle_value(&mut self.extra_state.core_info_window_open, "Core Info")
-                    .clicked();
+                ui.toggle_value(&mut self.extra_state.core_info_window_open, "Core Info");
+                ui.toggle_value(&mut self.extra_state.debug_window_open, "Debug");
             });
         });
 
         //
         // core_info window
         //
+
         egui::Window::new("Core Info")
             .open(&mut self.extra_state.core_info_window_open)
             .collapsible(false)
@@ -448,6 +449,93 @@ impl eframe::App for NodeGraphExample {
                 } else {
                     ui.label("(error)");
                 }
+            });
+
+        //
+        // debug window
+        //
+
+        egui::Window::new("Debug")
+            .open(&mut self.extra_state.debug_window_open)
+            .show(ctx, |ui| {
+                ui.heading("Global Objects");
+                ui.add_space(5.0);
+                let state = self.pipewire_wrapper.state.lock().unwrap();
+                let text_height = egui::TextStyle::Body.resolve(ui.style()).size;
+                egui::ScrollArea::both().max_height(400.0).show(ui, |ui| {
+                    TableBuilder::new(ui)
+                        .striped(true)
+                        .column(Size::exact(20.0))
+                        .column(Size::exact(80.0))
+                        .column(Size::remainder())
+                        .header(text_height, |mut header| {
+                            header.col(|ui| {
+                                ui.strong("ID");
+                            });
+                            header.col(|ui| {
+                                ui.strong("Type");
+                            });
+                            header.col(|ui| {
+                                ui.strong("Props");
+                            });
+                        })
+                        .body(|mut body| {
+                            for (_, object) in &state.global_objects {
+                                body.row(text_height, |mut row| {
+                                    row.col(|ui| {
+                                        ui.label(object.id.to_string());
+                                    });
+                                    row.col(|ui| {
+                                        ui.label(format!("{:?}", object.type_));
+                                    });
+                                    row.col(|ui| {
+                                        ui.label(format!("{:?}", object.props));
+                                    });
+                                });
+                            }
+                        });
+                });
+
+                ui.separator();
+
+                ui.heading("Manage Link");
+                ui.add_space(5.0);
+                egui::Grid::new("link")
+                    .num_columns(2)
+                    .spacing([10.0, 5.0])
+                    .show(ui, |ui| {
+                        ui.label("Input");
+                        ui.add(egui::TextEdit::singleline(
+                            &mut self.extra_state.debug_input,
+                        ));
+                        ui.end_row();
+                        ui.label("Output");
+                        ui.add(egui::TextEdit::singleline(
+                            &mut self.extra_state.debug_output,
+                        ));
+                        ui.end_row();
+                    });
+                ui.add_space(5.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Create Link").clicked() {
+                        self.pipewire_wrapper
+                            .channel_sender
+                            .send(ChannelMessage::LinkCreate(
+                                self.extra_state.debug_input.clone(),
+                                self.extra_state.debug_output.clone(),
+                            ))
+                            .unwrap();
+                    }
+                    if ui.button("Destroy Link").clicked() {
+                        self.pipewire_wrapper
+                            .channel_sender
+                            .send(ChannelMessage::LinkDestroy(
+                                self.extra_state.debug_input.clone(),
+                                self.extra_state.debug_output.clone(),
+                            ))
+                            .unwrap();
+                    }
+                });
             });
 
         //

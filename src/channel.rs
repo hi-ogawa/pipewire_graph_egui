@@ -1,6 +1,9 @@
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub enum ChannelMessage {
-    Noop,
+    PipewireRegistryGlobal,
+    PipewireRegistryGlobalRemove,
     PipewireMainLoopReady,
     PipewireMainLoopStopRequest,
+    LinkCreate(String, String),  // input, output
+    LinkDestroy(String, String), // input, output
 }
