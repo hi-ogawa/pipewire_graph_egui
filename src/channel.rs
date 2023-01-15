@@ -4,6 +4,6 @@ pub enum ChannelMessage {
     PipewireRegistryGlobalRemove,
     PipewireMainLoopReady,
     PipewireMainLoopStopRequest,
-    LinkCreate(String, String),  // input, output
-    LinkDestroy(String, String), // input, output
+    LinkCreate((String, String), (String, String)),
+    LinkDestroy((String, String), (String, String)),
 }

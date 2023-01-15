@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     channel::ChannelMessage,
-    pipewire_wrapper::{get_pipewire_object_name, PipewireWrapper},
+    pipewire_wrapper::{PipewireObject, PipewireWrapper},
 };
 
 // ========= First, define your user data types =============
@@ -380,6 +380,8 @@ struct ExtraState {
     debug_window_open: bool,
     debug_input: String,
     debug_output: String,
+    debug_link_from: Option<(String, String)>,
+    debug_link_to: Option<(String, String)>,
 }
 
 const PERSISTENCE_KEY: &str = env!("CARGO_PKG_NAME");
@@ -464,7 +466,6 @@ impl eframe::App for NodeGraphExample {
             .show(ctx, |ui| {
                 ui.heading("Global Objects");
                 ui.add_space(5.0);
-                let state = self.pipewire_wrapper.state.lock().unwrap();
                 let text_height = egui::TextStyle::Body.resolve(ui.style()).size;
                 egui::ScrollArea::both().max_height(400.0).show(ui, |ui| {
                     TableBuilder::new(ui)
@@ -484,6 +485,7 @@ impl eframe::App for NodeGraphExample {
                             });
                         })
                         .body(|mut body| {
+                            let state = self.pipewire_wrapper.state.lock().unwrap();
                             for (_, object) in &state.global_objects {
                                 body.row(text_height, |mut row| {
                                     row.col(|ui| {
@@ -494,7 +496,8 @@ impl eframe::App for NodeGraphExample {
                                     });
                                     row.col(|ui| {
                                         let label = ui.label(
-                                            get_pipewire_object_name(object).unwrap_or("--"),
+                                            PipewireObject::get_name(object)
+                                                .map_or("--", |(_k, v)| v),
                                         );
                                         if let Some(props) = &object.props {
                                             label.on_hover_ui(|ui| {
@@ -522,36 +525,99 @@ impl eframe::App for NodeGraphExample {
                     .num_columns(2)
                     .spacing([10.0, 5.0])
                     .show(ui, |ui| {
-                        ui.label("Input");
-                        ui.add(egui::TextEdit::singleline(
-                            &mut self.extra_state.debug_input,
-                        ));
+                        ui.label("From");
+                        let selected = self.extra_state.debug_link_from.clone();
+                        egui::ComboBox::from_id_source("link-from")
+                            .width(350.0)
+                            .selected_text(
+                                selected
+                                    .as_ref()
+                                    .map_or("".to_string(), |(_k, v)| v.clone()),
+                            )
+                            .show_ui(ui, |ui| {
+                                let state = self.pipewire_wrapper.state.lock().unwrap();
+                                for (_, object) in &state.global_objects {
+                                    if PipewireObject::is_output(object) {
+                                        if let Some((k, v)) = PipewireObject::get_name(object) {
+                                            let mut response = ui.selectable_label(
+                                                selected
+                                                    .as_ref()
+                                                    .map(|(k, v)| (k.as_str(), v.as_str()))
+                                                    == Some((k, v)),
+                                                v,
+                                            );
+                                            if response.clicked() {
+                                                self.extra_state.debug_link_from =
+                                                    Some((k.to_owned(), v.to_owned()));
+                                                response.mark_changed();
+                                            }
+                                        }
+                                    }
+                                }
+                            });
                         ui.end_row();
-                        ui.label("Output");
-                        ui.add(egui::TextEdit::singleline(
-                            &mut self.extra_state.debug_output,
-                        ));
+
+                        ui.label("To");
+                        let selected = self.extra_state.debug_link_to.clone();
+                        egui::ComboBox::from_id_source("link-to")
+                            .width(350.0)
+                            .selected_text(
+                                selected
+                                    .as_ref()
+                                    .map_or("".to_string(), |(_k, v)| v.clone()),
+                            )
+                            .show_ui(ui, |ui| {
+                                let state = self.pipewire_wrapper.state.lock().unwrap();
+                                for (_, object) in &state.global_objects {
+                                    if PipewireObject::is_input(object) {
+                                        if let Some((k, v)) = PipewireObject::get_name(object) {
+                                            let mut response = ui.selectable_label(
+                                                selected
+                                                    .as_ref()
+                                                    .map(|(k, v)| (k.as_str(), v.as_str()))
+                                                    == Some((k, v)),
+                                                v,
+                                            );
+                                            if response.clicked() {
+                                                self.extra_state.debug_link_to =
+                                                    Some((k.to_owned(), v.to_owned()));
+                                                response.mark_changed();
+                                            }
+                                        }
+                                    }
+                                }
+                            });
                         ui.end_row();
                     });
                 ui.add_space(5.0);
                 ui.horizontal(|ui| {
                     if ui.button("Create Link").clicked() {
-                        self.pipewire_wrapper
-                            .channel_sender
-                            .send(ChannelMessage::LinkCreate(
-                                self.extra_state.debug_input.clone(),
-                                self.extra_state.debug_output.clone(),
-                            ))
-                            .unwrap();
+                        match (
+                            &self.extra_state.debug_link_from,
+                            &self.extra_state.debug_link_to,
+                        ) {
+                            (Some(from), Some(to)) => {
+                                self.pipewire_wrapper
+                                    .channel_sender
+                                    .send(ChannelMessage::LinkCreate(from.clone(), to.clone()))
+                                    .unwrap();
+                            }
+                            _ => {}
+                        }
                     }
                     if ui.button("Destroy Link").clicked() {
-                        self.pipewire_wrapper
-                            .channel_sender
-                            .send(ChannelMessage::LinkDestroy(
-                                self.extra_state.debug_input.clone(),
-                                self.extra_state.debug_output.clone(),
-                            ))
-                            .unwrap();
+                        match (
+                            &self.extra_state.debug_link_from,
+                            &self.extra_state.debug_link_to,
+                        ) {
+                            (Some(from), Some(to)) => {
+                                self.pipewire_wrapper
+                                    .channel_sender
+                                    .send(ChannelMessage::LinkDestroy(from.clone(), to.clone()))
+                                    .unwrap();
+                            }
+                            _ => {}
+                        }
                     }
                 });
             });
