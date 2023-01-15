@@ -134,7 +134,7 @@ impl PipewireWrapper {
                                     )
                                     .unwrap();
                             } else {
-                                log::error!("LinkCreate not found");
+                                tracing::error!("LinkCreate not found");
                             }
                         }
                         ChannelMessage::LinkDestroy(from, to) => {
@@ -161,7 +161,7 @@ impl PipewireWrapper {
                             if let Some(object_id) = object_id {
                                 registry_.borrow().destroy_global(object_id).into_result().unwrap();
                             } else {
-                                log::error!("LinkDestroy not found");
+                                tracing::error!("LinkDestroy not found");
                             }
                         }
                         _ => {}
@@ -188,11 +188,11 @@ impl PipewireWrapper {
                         .unwrap();
                 })
                 .done(|done_id, seq| {
-                    log::info!("core done");
+                    tracing::info!("core done");
                     dbg!((done_id, seq));
                 })
                 .error(|error_id, seq, res, message| {
-                    log::error!("core error");
+                    tracing::error!("core error");
                     dbg!((error_id, seq, res, message));
                 })
                 .register();
