@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::BTreeMap,
     sync::{
         mpsc::{self, Receiver, Sender},
         Arc, Mutex,
@@ -24,7 +24,7 @@ pub struct PipewireWrapper {
 pub struct PipewireState {
     pub error: bool, // TODO feedback error to UI e.g. via https://github.com/ItsEthra/egui-notify
     pub core_info: Option<String>,
-    pub global_objects: HashMap<u32, GlobalObject<Properties>>,
+    pub global_objects: BTreeMap<u32, GlobalObject<Properties>>,
 }
 
 // TODO: it's still non `Send` after `GlobalObject::to_owned` ??

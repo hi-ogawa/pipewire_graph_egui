@@ -368,10 +368,10 @@ pub struct NodeGraphExample {
 
     pipewire_wrapper: PipewireWrapper,
 
-    extra_state: ExtraState, // what...
+    extra_state: ExtraState,
 }
 
-#[derive(Default)]
+#[derive(Default, Serialize, Deserialize)]
 struct ExtraState {
     core_info_window_open: bool,
     debug_window_open: bool,
@@ -384,13 +384,13 @@ const PERSISTENCE_KEY: &str = env!("CARGO_PKG_NAME");
 impl NodeGraphExample {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         Self {
-            state: cc
+            state: Default::default(),
+            user_state: Default::default(),
+            pipewire_wrapper: PipewireWrapper::new(),
+            extra_state: cc
                 .storage
                 .and_then(|storage| eframe::get_value(storage, PERSISTENCE_KEY))
                 .unwrap_or_default(),
-            user_state: Default::default(),
-            pipewire_wrapper: PipewireWrapper::new(),
-            extra_state: ExtraState::default(),
         }
     }
 }
@@ -403,7 +403,7 @@ impl eframe::App for NodeGraphExample {
     /// If the persistence function is enabled,
     /// Called by the frame work to save state before shutdown.
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        eframe::set_value(storage, PERSISTENCE_KEY, &self.state);
+        eframe::set_value(storage, PERSISTENCE_KEY, &self.extra_state);
     }
 
     /// Called each time the UI needs repainting, which may be many times per second.
