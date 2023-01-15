@@ -300,24 +300,16 @@ impl PipewireObject {
     }
 
     pub fn is_input(object: &GlobalObject<Properties>) -> bool {
-        use pipewire::keys::*;
         object.type_ == ObjectType::Port
-            && object
-                .props
-                .as_ref()
-                .map(|prop| prop.get(*PORT_DIRECTION))
-                .flatten()
-                == Some("in")
+            && PipewireObject::get_prop(object, *pipewire::keys::PORT_DIRECTION) == Some("in")
     }
 
     pub fn is_output(object: &GlobalObject<Properties>) -> bool {
-        use pipewire::keys::*;
         object.type_ == ObjectType::Port
-            && object
-                .props
-                .as_ref()
-                .map(|prop| prop.get(*PORT_DIRECTION))
-                .flatten()
-                == Some("out")
+            && PipewireObject::get_prop(object, *pipewire::keys::PORT_DIRECTION) == Some("out")
+    }
+
+    pub fn get_prop<'a, 'b>(object: &'a GlobalObject<Properties>, key: &'b str) -> Option<&'a str> {
+        object.props.as_ref().map(|prop| prop.get(key)).flatten()
     }
 }

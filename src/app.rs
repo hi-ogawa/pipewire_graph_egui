@@ -349,6 +349,8 @@ pub struct NodeGraphExample {
 
     pipewire_wrapper: PipewireWrapper,
 
+    pipewire_id_to_node_id: HashMap<u32, NodeId>,
+
     extra_state: ExtraState,
 }
 
@@ -369,6 +371,7 @@ impl NodeGraphExample {
             state: Default::default(),
             user_state: Default::default(),
             pipewire_wrapper: PipewireWrapper::new(),
+            pipewire_id_to_node_id: Default::default(),
             extra_state: cc
                 .storage
                 .and_then(|storage| eframe::get_value(storage, PERSISTENCE_KEY))
@@ -400,7 +403,7 @@ impl eframe::App for NodeGraphExample {
                     match object.type_ {
                         ObjectType::Node => {
                             if let Some((_, name)) = PipewireObject::get_name(object) {
-                                let new_node = self.state.graph.add_node(
+                                let node_id = self.state.graph.add_node(
                                     name.to_owned(),
                                     MyNodeData {
                                         template: MyNodeTemplate::AddScalar,
@@ -409,7 +412,9 @@ impl eframe::App for NodeGraphExample {
                                         // node_kind.build_node(graph, user_state, node_id)
                                     },
                                 );
-                                self.state.node_order.push(new_node);
+                                self.pipewire_id_to_node_id.insert(object.id, node_id);
+
+                                self.state.node_order.push(node_id);
 
                                 // pesudo random graph node position
                                 let (x, y) = {
@@ -422,12 +427,46 @@ impl eframe::App for NodeGraphExample {
                                     let (x, y) = ((hash >> 32) as f32, hash as u32 as f32);
                                     (x / (u32::MAX as f32) * 500.0, y / (u32::MAX as f32) * 500.0)
                                 };
-                                self.state.node_positions.insert(new_node, egui::pos2(x, y));
+                                self.state.node_positions.insert(node_id, egui::pos2(x, y));
                             }
                         }
                         ObjectType::Port => {
-                            // self.state.graph.add_input_param(node_id, name, typ, value, kind, shown_inline)
-                            // self.state.graph.add_output_param(node_id, name, typ)
+                            || -> Option<()> {
+                                let pipewire_id: u32 =
+                                    PipewireObject::get_prop(object, *pipewire::keys::NODE_ID)?
+                                        .parse()
+                                        .ok()?;
+                                let &node_id = self.pipewire_id_to_node_id.get(&pipewire_id)?;
+                                let (_, port_name) = PipewireObject::get_name(object)?;
+                                let port_direction = PipewireObject::get_prop(
+                                    object,
+                                    *pipewire::keys::PORT_DIRECTION,
+                                )?;
+                                match port_direction {
+                                    "in" => {
+                                        let _input_id = self.state.graph.add_input_param(
+                                            node_id,
+                                            port_name.to_string(),
+                                            MyDataType::Scalar,
+                                            MyValueType::Scalar { value: 0.0 },
+                                            InputParamKind::ConnectionOnly,
+                                            true,
+                                        );
+                                    }
+                                    "out" => {
+                                        let _output_id = self.state.graph.add_output_param(
+                                            node_id,
+                                            port_name.to_string(),
+                                            MyDataType::Scalar,
+                                        );
+                                    }
+                                    _ => {}
+                                };
+                                Some(())
+                            }()
+                            .unwrap_or_else(|| {
+                                tracing::error!("invalid port {:?}", object);
+                            });
                         }
                         ObjectType::Link => {
                             // self.state.graph.add_connection(output, input);
