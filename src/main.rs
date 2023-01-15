@@ -2,7 +2,7 @@ use eframe::{egui::Visuals, run_native, NativeOptions};
 use pipewire_graph_egui::app::NodeGraphExample;
 
 fn main() {
-    env_logger::init();
+    tracing_subscriber::fmt::init();
 
     run_native(
         env!("CARGO_PKG_NAME"),
