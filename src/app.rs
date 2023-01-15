@@ -1,9 +1,15 @@
 use std::{borrow::Cow, collections::HashMap};
 
 use eframe::egui::{self, DragValue, TextStyle};
+use egui_extras::{Size, TableBuilder};
 use egui_node_graph::*;
 
 use serde::{Deserialize, Serialize};
+
+use crate::{
+    channel::ChannelMessage,
+    pipewire_wrapper::{PipewireObject, PipewireWrapper},
+};
 
 // ========= First, define your user data types =============
 
@@ -356,52 +362,264 @@ type MyGraph = Graph<MyNodeData, MyDataType, MyValueType>;
 type MyEditorState =
     GraphEditorState<MyNodeData, MyDataType, MyValueType, MyNodeTemplate, MyGraphState>;
 
-#[derive(Default)]
 pub struct NodeGraphExample {
     // The `GraphEditorState` is the top-level object. You "register" all your
     // custom types by specifying it as its generic parameters.
     state: MyEditorState,
 
     user_state: MyGraphState,
+
+    pipewire_wrapper: PipewireWrapper,
+
+    extra_state: ExtraState,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+struct ExtraState {
+    window_core: bool,
+    window_object: bool,
+    window_link: bool,
+    link_from: Option<(String, String)>,
+    link_to: Option<(String, String)>,
 }
 
 const PERSISTENCE_KEY: &str = env!("CARGO_PKG_NAME");
 
 impl NodeGraphExample {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        pipewire::init();
-
         Self {
-            state: cc
+            state: Default::default(),
+            user_state: Default::default(),
+            pipewire_wrapper: PipewireWrapper::new(),
+            extra_state: cc
                 .storage
                 .and_then(|storage| eframe::get_value(storage, PERSISTENCE_KEY))
                 .unwrap_or_default(),
-            user_state: Default::default(),
         }
     }
 }
 
 impl eframe::App for NodeGraphExample {
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        unsafe {
-            pipewire::deinit();
-        }
+        self.pipewire_wrapper.quit().unwrap();
     }
 
     /// If the persistence function is enabled,
     /// Called by the frame work to save state before shutdown.
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        eframe::set_value(storage, PERSISTENCE_KEY, &self.state);
+        eframe::set_value(storage, PERSISTENCE_KEY, &self.extra_state);
     }
 
     /// Called each time the UI needs repainting, which may be many times per second.
     /// Put your widgets into a `SidePanel`, `TopPanel`, `CentralPanel`, `Window` or `Area`.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        while let Ok(message) = self.pipewire_wrapper.channel_receiver.try_recv() {
+            dbg!(message);
+        }
+
+        //
+        // menu bar
+        //
+
         egui::TopBottomPanel::top("top").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
                 egui::widgets::global_dark_light_mode_switch(ui);
+                ui.toggle_value(&mut self.extra_state.window_core, "Core");
+                ui.toggle_value(&mut self.extra_state.window_object, "Object");
+                ui.toggle_value(&mut self.extra_state.window_link, "Link");
             });
         });
+
+        //
+        // Core window
+        //
+
+        egui::Window::new("Core")
+            .open(&mut self.extra_state.window_core)
+            .default_width(500.0)
+            .show(ctx, |ui| {
+                if let Ok(state) = self.pipewire_wrapper.state.lock().as_deref() {
+                    if let Some(core_info) = &state.core_info {
+                        egui::ScrollArea::both().show(ui, |ui| {
+                            ui.add(
+                                egui::TextEdit::multiline(&mut core_info.as_str())
+                                    .font(egui::TextStyle::Monospace)
+                                    .desired_width(f32::INFINITY),
+                            );
+                        });
+                    } else {
+                        ui.label("(initializing..)");
+                    }
+                } else {
+                    ui.label("(error)");
+                }
+            });
+
+        //
+        // Object window
+        //
+
+        egui::Window::new("Object")
+            .open(&mut self.extra_state.window_object)
+            .show(ctx, |ui| {
+                let text_height = egui::TextStyle::Body.resolve(ui.style()).size;
+                egui::ScrollArea::both().max_height(400.0).show(ui, |ui| {
+                    TableBuilder::new(ui)
+                        .striped(true)
+                        .column(Size::exact(20.0))
+                        .column(Size::exact(80.0))
+                        .column(Size::remainder())
+                        .header(text_height, |mut header| {
+                            header.col(|ui| {
+                                ui.strong("ID");
+                            });
+                            header.col(|ui| {
+                                ui.strong("Type");
+                            });
+                            header.col(|ui| {
+                                ui.strong("Props");
+                            });
+                        })
+                        .body(|mut body| {
+                            let state = self.pipewire_wrapper.state.lock().unwrap();
+                            for (_, object) in &state.global_objects {
+                                body.row(text_height, |mut row| {
+                                    row.col(|ui| {
+                                        ui.label(object.id.to_string());
+                                    });
+                                    row.col(|ui| {
+                                        ui.label(format!("{:?}", object.type_));
+                                    });
+                                    row.col(|ui| {
+                                        let label = ui.label(
+                                            PipewireObject::get_name(object)
+                                                .map_or("--", |(_k, v)| v),
+                                        );
+                                        if let Some(props) = &object.props {
+                                            label.on_hover_ui(|ui| {
+                                                let props_str = format!("{:#?}", props);
+                                                ui.add(
+                                                    egui::TextEdit::multiline(
+                                                        &mut props_str.as_str(),
+                                                    )
+                                                    .font(egui::TextStyle::Monospace)
+                                                    .desired_width(f32::INFINITY),
+                                                );
+                                            });
+                                        };
+                                    });
+                                });
+                            }
+                        });
+                });
+            });
+
+        //
+        // Link create/destroy window
+        //
+
+        egui::Window::new("Link")
+            .open(&mut self.extra_state.window_link)
+            .show(ctx, |ui| {
+                egui::Grid::new("link")
+                    .num_columns(2)
+                    .spacing([10.0, 5.0])
+                    .show(ui, |ui| {
+                        ui.label("From");
+                        let selected = self.extra_state.link_from.clone();
+                        egui::ComboBox::from_id_source("link-from")
+                            .width(350.0)
+                            .selected_text(
+                                selected
+                                    .as_ref()
+                                    .map_or("".to_string(), |(_k, v)| v.clone()),
+                            )
+                            .show_ui(ui, |ui| {
+                                let state = self.pipewire_wrapper.state.lock().unwrap();
+                                for (_, object) in &state.global_objects {
+                                    if PipewireObject::is_output(object) {
+                                        if let Some((k, v)) = PipewireObject::get_name(object) {
+                                            let mut response = ui.selectable_label(
+                                                selected
+                                                    .as_ref()
+                                                    .map(|(k, v)| (k.as_str(), v.as_str()))
+                                                    == Some((k, v)),
+                                                v,
+                                            );
+                                            if response.clicked() {
+                                                self.extra_state.link_from =
+                                                    Some((k.to_owned(), v.to_owned()));
+                                                response.mark_changed();
+                                            }
+                                        }
+                                    }
+                                }
+                            });
+                        ui.end_row();
+
+                        ui.label("To");
+                        let selected = self.extra_state.link_to.clone();
+                        egui::ComboBox::from_id_source("link-to")
+                            .width(350.0)
+                            .selected_text(
+                                selected
+                                    .as_ref()
+                                    .map_or("".to_string(), |(_k, v)| v.clone()),
+                            )
+                            .show_ui(ui, |ui| {
+                                let state = self.pipewire_wrapper.state.lock().unwrap();
+                                for (_, object) in &state.global_objects {
+                                    if PipewireObject::is_input(object) {
+                                        if let Some((k, v)) = PipewireObject::get_name(object) {
+                                            let mut response = ui.selectable_label(
+                                                selected
+                                                    .as_ref()
+                                                    .map(|(k, v)| (k.as_str(), v.as_str()))
+                                                    == Some((k, v)),
+                                                v,
+                                            );
+                                            if response.clicked() {
+                                                self.extra_state.link_to =
+                                                    Some((k.to_owned(), v.to_owned()));
+                                                response.mark_changed();
+                                            }
+                                        }
+                                    }
+                                }
+                            });
+                        ui.end_row();
+                    });
+                ui.add_space(5.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Create Link").clicked() {
+                        match (&self.extra_state.link_from, &self.extra_state.link_to) {
+                            (Some(from), Some(to)) => {
+                                self.pipewire_wrapper
+                                    .channel_sender
+                                    .send(ChannelMessage::LinkCreate(from.clone(), to.clone()))
+                                    .unwrap();
+                            }
+                            _ => {}
+                        }
+                    }
+                    if ui.button("Destroy Link").clicked() {
+                        match (&self.extra_state.link_from, &self.extra_state.link_to) {
+                            (Some(from), Some(to)) => {
+                                self.pipewire_wrapper
+                                    .channel_sender
+                                    .send(ChannelMessage::LinkDestroy(from.clone(), to.clone()))
+                                    .unwrap();
+                            }
+                            _ => {}
+                        }
+                    }
+                });
+            });
+
+        //
+        // node graph
+        //
+
         let graph_response = egui::CentralPanel::default()
             .show(ctx, |ui| {
                 self.state

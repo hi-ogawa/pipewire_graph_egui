@@ -1,0 +1,15 @@
+name: ci
+on: [push]
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: 1.65.0
+      - uses: Swatinem/rust-cache@v2
+      - name: install deps
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libclang-dev libspa-0.2-dev libpipewire-0.3-dev
+      - run: cargo fmt --check
+      - run: cargo build
