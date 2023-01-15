@@ -12,7 +12,7 @@ use std::{
 
 use anyhow::{Context, Result};
 
-use crate::channel::ChannelMessage;
+use crate::channel::{ChannelMessage, ObjectWrapper};
 use pipewire::{prelude::ReadableDict, registry::GlobalObject, types::ObjectType, Properties};
 
 pub struct PipewireWrapper {
@@ -213,7 +213,9 @@ impl PipewireWrapper {
                         .global_objects
                         .insert(global_object.id, global_object.to_owned());
                     pw_sender_1
-                        .send(ChannelMessage::PipewireRegistryGlobal)
+                        .send(ChannelMessage::PipewireRegistryGlobal(ObjectWrapper(
+                            global_object.to_owned(),
+                        )))
                         .unwrap();
                 })
                 .global_remove(move |global_remove_id| {
@@ -224,7 +226,9 @@ impl PipewireWrapper {
                         .global_objects
                         .remove(&global_remove_id);
                     pw_sender_2
-                        .send(ChannelMessage::PipewireRegistryGlobalRemove)
+                        .send(ChannelMessage::PipewireRegistryGlobalRemove(
+                            global_remove_id,
+                        ))
                         .unwrap();
                 })
                 .register();

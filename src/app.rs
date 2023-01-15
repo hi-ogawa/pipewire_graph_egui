@@ -4,6 +4,7 @@ use eframe::egui::{self, DragValue, TextStyle};
 use egui_extras::{Size, TableBuilder};
 use egui_node_graph::*;
 
+use pipewire::types::ObjectType;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -125,10 +126,10 @@ impl DataTypeTrait<MyGraphState> for MyDataType {
 // A trait for the node kinds, which tells the library how to build new nodes
 // from the templates in the node finder
 impl NodeTemplateTrait for MyNodeTemplate {
-    type NodeData = MyNodeData;
-    type DataType = MyDataType;
-    type ValueType = MyValueType;
-    type UserState = MyGraphState;
+    type NodeData = MyNodeData; // unit
+    type DataType = MyDataType; // midi or audio
+    type ValueType = MyValueType; // unit
+    type UserState = MyGraphState; // unit
 
     fn node_finder_label(&self, _user_state: &mut Self::UserState) -> Cow<'_, str> {
         Cow::Borrowed(match self {
@@ -311,50 +312,26 @@ impl NodeDataTrait for MyNodeData {
     type DataType = MyDataType;
     type ValueType = MyValueType;
 
-    // This method will be called when drawing each node. This allows adding
-    // extra ui elements inside the nodes. In this case, we create an "active"
-    // button which introduces the concept of having an active node in the
-    // graph. This is done entirely from user code with no modifications to the
-    // node graph library.
+    fn can_delete(
+        &self,
+        _node_id: NodeId,
+        _graph: &Graph<Self, Self::DataType, Self::ValueType>,
+        _user_state: &mut Self::UserState,
+    ) -> bool {
+        false
+    }
+
     fn bottom_ui(
         &self,
-        ui: &mut egui::Ui,
-        node_id: NodeId,
+        _ui: &mut egui::Ui,
+        _node_id: NodeId,
         _graph: &Graph<MyNodeData, MyDataType, MyValueType>,
-        user_state: &mut Self::UserState,
+        _user_state: &mut Self::UserState,
     ) -> Vec<NodeResponse<MyResponse, MyNodeData>>
     where
         MyResponse: UserResponseTrait,
     {
-        // This logic is entirely up to the user. In this case, we check if the
-        // current node we're drawing is the active one, by comparing against
-        // the value stored in the global user state, and draw different button
-        // UIs based on that.
-
-        let mut responses = vec![];
-        let is_active = user_state
-            .active_node
-            .map(|id| id == node_id)
-            .unwrap_or(false);
-
-        // Pressing the button will emit a custom user response to either set,
-        // or clear the active node. These responses do nothing by themselves,
-        // the library only makes the responses available to you after the graph
-        // has been drawn. See below at the update method for an example.
-        if !is_active {
-            if ui.button("👁 Set active").clicked() {
-                responses.push(NodeResponse::User(MyResponse::SetActiveNode(node_id)));
-            }
-        } else {
-            let button =
-                egui::Button::new(egui::RichText::new("👁 Active").color(egui::Color32::BLACK))
-                    .fill(egui::Color32::GOLD);
-            if ui.add(button).clicked() {
-                responses.push(NodeResponse::User(MyResponse::ClearActiveNode));
-            }
-        }
-
-        responses
+        Default::default()
     }
 }
 
@@ -414,7 +391,55 @@ impl eframe::App for NodeGraphExample {
     /// Put your widgets into a `SidePanel`, `TopPanel`, `CentralPanel`, `Window` or `Area`.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         while let Ok(message) = self.pipewire_wrapper.channel_receiver.try_recv() {
-            dbg!(message);
+            dbg!(&message);
+            match &message {
+                ChannelMessage::PipewireRegistryGlobal(object) => {
+                    let object = &object.0;
+                    match object.type_ {
+                        ObjectType::Node => {
+                            if let Some((_, name)) = PipewireObject::get_name(object) {
+                                let new_node = self.state.graph.add_node(
+                                    name.to_owned(),
+                                    MyNodeData {
+                                        template: MyNodeTemplate::AddScalar,
+                                    },
+                                    |_graph, _node_id| {
+                                        // node_kind.build_node(graph, user_state, node_id)
+                                    },
+                                );
+                                self.state.node_order.push(new_node);
+
+                                let (x, y) = {
+                                    use std::collections::hash_map::DefaultHasher;
+                                    use std::hash::{Hash, Hasher};
+
+                                    let mut hasher = DefaultHasher::new();
+                                    name.hash(&mut hasher);
+                                    let hash = hasher.finish();
+                                    let (x, y) = ((hash >> 32) as f32, hash as u32 as f32);
+                                    (x / (u32::MAX as f32) * 500.0, y / (u32::MAX as f32) * 500.0)
+                                };
+                                dbg!((x, y));
+                                self.state.node_positions.insert(new_node, egui::pos2(x, y));
+                            }
+                        }
+                        ObjectType::Port => {
+                            // self.state.graph.add_input_param(node_id, name, typ, value, kind, shown_inline)
+                            // self.state.graph.add_output_param(node_id, name, typ)
+                        }
+                        ObjectType::Link => {
+                            // self.state.graph.add_connection(output, input);
+                            // self.state.graph.add_node(label, user_data, f)
+                        }
+                        _ => {}
+                    }
+                }
+                ChannelMessage::PipewireRegistryGlobalRemove(_id) => {
+                    // self.state.graph.remove_node(node_id);
+                    // self.state.graph.remove_connection(input_id);
+                }
+                _ => {}
+            }
         }
 
         //
@@ -627,14 +652,14 @@ impl eframe::App for NodeGraphExample {
             })
             .inner;
         for node_response in graph_response.node_responses {
-            // Here, we ignore all other graph events. But you may find
-            // some use for them. For example, by playing a sound when a new
-            // connection is created
-            if let NodeResponse::User(user_event) = node_response {
-                match user_event {
+            match node_response {
+                NodeResponse::ConnectEventStarted(..) => {}
+                NodeResponse::ConnectEventEnded { .. } => {}
+                NodeResponse::User(user_event) => match user_event {
                     MyResponse::SetActiveNode(node) => self.user_state.active_node = Some(node),
                     MyResponse::ClearActiveNode => self.user_state.active_node = None,
-                }
+                },
+                _ => {}
             }
         }
 
