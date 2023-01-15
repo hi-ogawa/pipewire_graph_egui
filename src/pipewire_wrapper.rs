@@ -31,6 +31,10 @@ pub struct PipewireState {
 unsafe impl Send for PipewireState {}
 
 impl PipewireState {
+    // fn get_object_name() -> Option<&str> {
+    //     None
+    // }
+
     // factory names are supposed to be probed at runtime
     // evn though official tools depend on such convention e.g.
     //   "PipeWire:Interface:Link" => "link-factory"
@@ -55,6 +59,29 @@ impl PipewireState {
         }
         None
     }
+}
+
+pub fn get_pipewire_object_name(object: &GlobalObject<Properties>) -> Option<&str> {
+    use pipewire::keys::*;
+    [
+        *CLIENT_NAME,
+        *CORE_NAME,
+        *DEVICE_NAME,
+        *FACTORY_NAME,
+        *NODE_NAME,
+        *MODULE_NAME,
+        *APP_NAME,
+        unsafe {
+            std::ffi::CStr::from_bytes_with_nul_unchecked(pipewire::sys::PW_KEY_METADATA_NAME)
+                .to_str()
+                .unwrap()
+        },
+        *OBJECT_PATH,
+        *PORT_ALIAS,
+    ]
+    .iter()
+    .flat_map(|key| object.props.as_ref().map(|prop| prop.get(key)).flatten())
+    .next()
 }
 
 impl PipewireWrapper {

@@ -6,7 +6,10 @@ use egui_node_graph::*;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{channel::ChannelMessage, pipewire_wrapper::PipewireWrapper};
+use crate::{
+    channel::ChannelMessage,
+    pipewire_wrapper::{get_pipewire_object_name, PipewireWrapper},
+};
 
 // ========= First, define your user data types =============
 
@@ -457,6 +460,7 @@ impl eframe::App for NodeGraphExample {
 
         egui::Window::new("Debug")
             .open(&mut self.extra_state.debug_window_open)
+            .resizable(true)
             .show(ctx, |ui| {
                 ui.heading("Global Objects");
                 ui.add_space(5.0);
@@ -489,7 +493,21 @@ impl eframe::App for NodeGraphExample {
                                         ui.label(format!("{:?}", object.type_));
                                     });
                                     row.col(|ui| {
-                                        ui.label(format!("{:?}", object.props));
+                                        let label = ui.label(
+                                            get_pipewire_object_name(object).unwrap_or("--"),
+                                        );
+                                        if let Some(props) = &object.props {
+                                            label.on_hover_ui(|ui| {
+                                                let props_str = format!("{:#?}", props);
+                                                ui.add(
+                                                    egui::TextEdit::multiline(
+                                                        &mut props_str.as_str(),
+                                                    )
+                                                    .font(egui::TextStyle::Monospace)
+                                                    .desired_width(f32::INFINITY),
+                                                );
+                                            });
+                                        };
                                     });
                                 });
                             }
