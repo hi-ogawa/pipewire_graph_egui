@@ -11,3 +11,5 @@ egui_node_graph = { version = "0.4.0", features = ["persistence"] }
 anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 pipewire = { path = "./thirdparty/pipewire-rs/pipewire" }
+log = "0.4.17"
+env_logger = "0.10.0"
