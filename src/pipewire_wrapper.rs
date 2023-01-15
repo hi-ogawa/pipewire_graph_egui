@@ -30,6 +30,33 @@ pub struct PipewireState {
 // TODO: it's still non `Send` after `GlobalObject::to_owned` ??
 unsafe impl Send for PipewireState {}
 
+impl PipewireState {
+    // factory names are supposed to be probed at runtime
+    // evn though official tools depend on such convention e.g.
+    //   "PipeWire:Interface:Link" => "link-factory"
+    //    https://gitlab.freedesktop.org/pipewire/pipewire/-/blob/792defde27e22673bd42b0584e875c78311e900b/src/tools/pw-cli.c#L1530
+    fn get_factory_name(&self, object_type: pipewire::types::ObjectType) -> Option<&str> {
+        for (_, global_object) in &self.global_objects {
+            if global_object.type_ == pipewire::types::ObjectType::Factory {
+                if let Some(props) = &global_object.props {
+                    match (
+                        props.get(*pipewire::keys::FACTORY_TYPE_NAME),
+                        props.get(*pipewire::keys::FACTORY_NAME),
+                    ) {
+                        (Some(factory_type_name), Some(factory_name)) => {
+                            if factory_type_name == object_type.to_str() {
+                                return Some(factory_name);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        None
+    }
+}
+
 impl PipewireWrapper {
     pub fn new() -> Self {
         pipewire::init();
@@ -49,18 +76,12 @@ impl PipewireWrapper {
             let core = context.connect(None).unwrap();
             let registry = core.get_registry().unwrap();
 
-            // factory names are supposed to be probed at runtime
-            // though even official tools depends on such convention as:
-            //   "PipeWire:Interface:Link" => "link-factory"
-            //   https://gitlab.freedesktop.org/pipewire/pipewire/-/blob/792defde27e22673bd42b0584e875c78311e900b/src/tools/pw-cli.c#L1530
-            let factory_name_map: Arc<Mutex<HashMap<String, String>>> = Default::default();
-
             // channel message handler via `add_timer`
             // (`add_idle` looks too expensive)
-            // (it's probably possible to use `add_event` by using one more thread proxying events)
+            // (it would be probablly more efficient with `add_event` if we have one more thread to proxy message)
             let main_loop_weak = main_loop.downgrade();
             let core_ = core.clone();
-            let factory_name_map_ = factory_name_map.clone();
+            let state_ = state.clone();
             let timer_source = main_loop.add_timer(move |_| {
                 while let Ok(message) = pw_receiver.try_recv() {
                     match message {
@@ -70,9 +91,11 @@ impl PipewireWrapper {
                         ChannelMessage::LinkCreate(_input, _output) => {
                             core_
                                 .create_object::<pipewire::link::Link, _>(
-                                    factory_name_map_.lock().unwrap()
-                                        [&pipewire::types::ObjectType::Link.to_string()]
-                                        .as_str(),
+                                    state_
+                                        .lock()
+                                        .unwrap()
+                                        .get_factory_name(pipewire::types::ObjectType::Link)
+                                        .unwrap(),
                                     &pipewire::properties! {
                                         *pipewire::keys::LINK_INPUT_NODE => "",
                                         *pipewire::keys::LINK_INPUT_PORT => "",
@@ -85,9 +108,11 @@ impl PipewireWrapper {
                         ChannelMessage::LinkDestroy(_, _) => {
                             core_
                                 .create_object::<pipewire::link::Link, _>(
-                                    factory_name_map_.lock().unwrap()
-                                        [&pipewire::types::ObjectType::Link.to_string()]
-                                        .as_str(),
+                                    state_
+                                        .lock()
+                                        .unwrap()
+                                        .get_factory_name(pipewire::types::ObjectType::Link)
+                                        .unwrap(),
                                     &pipewire::properties! {
                                         *pipewire::keys::LINK_INPUT_NODE => "",
                                         *pipewire::keys::LINK_INPUT_PORT => "",
@@ -133,7 +158,6 @@ impl PipewireWrapper {
             let pw_sender_2 = pw_sender.clone();
             let state_1 = state.clone();
             let state_2 = state.clone();
-            let factory_name_map_ = factory_name_map.clone();
             let _must_use = registry
                 .add_listener_local()
                 .global(move |global_object| {
@@ -143,22 +167,6 @@ impl PipewireWrapper {
                         .unwrap()
                         .global_objects
                         .insert(global_object.id, global_object.to_owned());
-                    match global_object.type_ {
-                        pipewire::types::ObjectType::Factory => {
-                            let props = global_object.props.as_ref().unwrap();
-                            factory_name_map_.lock().unwrap().insert(
-                                props
-                                    .get(*pipewire::keys::FACTORY_TYPE_NAME)
-                                    .unwrap()
-                                    .to_string(),
-                                props
-                                    .get(*pipewire::keys::FACTORY_NAME)
-                                    .unwrap()
-                                    .to_string(),
-                            );
-                        }
-                        _ => {}
-                    }
                     pw_sender_1
                         .send(ChannelMessage::PipewireRegistryGlobal)
                         .unwrap();
