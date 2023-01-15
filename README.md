@@ -4,6 +4,7 @@
 cargo run
 ```
 
+![image](https://user-images.githubusercontent.com/4232207/212531925-65196cb4-41bb-46e1-8cb5-05d01075b49f.png)
 
 ## references
 
