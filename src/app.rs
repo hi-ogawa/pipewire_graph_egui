@@ -376,12 +376,11 @@ pub struct NodeGraphExample {
 
 #[derive(Default, Serialize, Deserialize)]
 struct ExtraState {
-    core_info_window_open: bool,
-    debug_window_open: bool,
-    debug_input: String,
-    debug_output: String,
-    debug_link_from: Option<(String, String)>,
-    debug_link_to: Option<(String, String)>,
+    window_core: bool,
+    window_object: bool,
+    window_link: bool,
+    link_from: Option<(String, String)>,
+    link_to: Option<(String, String)>,
 }
 
 const PERSISTENCE_KEY: &str = env!("CARGO_PKG_NAME");
@@ -425,18 +424,18 @@ impl eframe::App for NodeGraphExample {
         egui::TopBottomPanel::top("top").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| {
                 egui::widgets::global_dark_light_mode_switch(ui);
-                ui.toggle_value(&mut self.extra_state.core_info_window_open, "Core Info");
-                ui.toggle_value(&mut self.extra_state.debug_window_open, "Debug");
+                ui.toggle_value(&mut self.extra_state.window_core, "Core");
+                ui.toggle_value(&mut self.extra_state.window_object, "Object");
+                ui.toggle_value(&mut self.extra_state.window_link, "Link");
             });
         });
 
         //
-        // core_info window
+        // Core window
         //
 
-        egui::Window::new("Core Info")
-            .open(&mut self.extra_state.core_info_window_open)
-            .collapsible(false)
+        egui::Window::new("Core")
+            .open(&mut self.extra_state.window_core)
             .default_width(500.0)
             .show(ctx, |ui| {
                 if let Ok(state) = self.pipewire_wrapper.state.lock().as_deref() {
@@ -457,15 +456,12 @@ impl eframe::App for NodeGraphExample {
             });
 
         //
-        // debug window
+        // Object window
         //
 
-        egui::Window::new("Debug")
-            .open(&mut self.extra_state.debug_window_open)
-            .resizable(true)
+        egui::Window::new("Object")
+            .open(&mut self.extra_state.window_object)
             .show(ctx, |ui| {
-                ui.heading("Global Objects");
-                ui.add_space(5.0);
                 let text_height = egui::TextStyle::Body.resolve(ui.style()).size;
                 egui::ScrollArea::both().max_height(400.0).show(ui, |ui| {
                     TableBuilder::new(ui)
@@ -516,17 +512,21 @@ impl eframe::App for NodeGraphExample {
                             }
                         });
                 });
+            });
 
-                ui.separator();
+        //
+        // Link create/destroy window
+        //
 
-                ui.heading("Manage Link");
-                ui.add_space(5.0);
+        egui::Window::new("Link")
+            .open(&mut self.extra_state.window_link)
+            .show(ctx, |ui| {
                 egui::Grid::new("link")
                     .num_columns(2)
                     .spacing([10.0, 5.0])
                     .show(ui, |ui| {
                         ui.label("From");
-                        let selected = self.extra_state.debug_link_from.clone();
+                        let selected = self.extra_state.link_from.clone();
                         egui::ComboBox::from_id_source("link-from")
                             .width(350.0)
                             .selected_text(
@@ -547,7 +547,7 @@ impl eframe::App for NodeGraphExample {
                                                 v,
                                             );
                                             if response.clicked() {
-                                                self.extra_state.debug_link_from =
+                                                self.extra_state.link_from =
                                                     Some((k.to_owned(), v.to_owned()));
                                                 response.mark_changed();
                                             }
@@ -558,7 +558,7 @@ impl eframe::App for NodeGraphExample {
                         ui.end_row();
 
                         ui.label("To");
-                        let selected = self.extra_state.debug_link_to.clone();
+                        let selected = self.extra_state.link_to.clone();
                         egui::ComboBox::from_id_source("link-to")
                             .width(350.0)
                             .selected_text(
@@ -579,7 +579,7 @@ impl eframe::App for NodeGraphExample {
                                                 v,
                                             );
                                             if response.clicked() {
-                                                self.extra_state.debug_link_to =
+                                                self.extra_state.link_to =
                                                     Some((k.to_owned(), v.to_owned()));
                                                 response.mark_changed();
                                             }
@@ -592,10 +592,7 @@ impl eframe::App for NodeGraphExample {
                 ui.add_space(5.0);
                 ui.horizontal(|ui| {
                     if ui.button("Create Link").clicked() {
-                        match (
-                            &self.extra_state.debug_link_from,
-                            &self.extra_state.debug_link_to,
-                        ) {
+                        match (&self.extra_state.link_from, &self.extra_state.link_to) {
                             (Some(from), Some(to)) => {
                                 self.pipewire_wrapper
                                     .channel_sender
@@ -606,10 +603,7 @@ impl eframe::App for NodeGraphExample {
                         }
                     }
                     if ui.button("Destroy Link").clicked() {
-                        match (
-                            &self.extra_state.debug_link_from,
-                            &self.extra_state.debug_link_to,
-                        ) {
+                        match (&self.extra_state.link_from, &self.extra_state.link_to) {
                             (Some(from), Some(to)) => {
                                 self.pipewire_wrapper
                                     .channel_sender
