@@ -312,6 +312,7 @@ impl NodeDataTrait for MyNodeData {
     type DataType = MyDataType;
     type ValueType = MyValueType;
 
+    // TODO: titlebar layout looks broken without delete button
     fn can_delete(
         &self,
         _node_id: NodeId,
@@ -392,6 +393,7 @@ impl eframe::App for NodeGraphExample {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         while let Ok(message) = self.pipewire_wrapper.channel_receiver.try_recv() {
             dbg!(&message);
+            // TODO: is it guarnateed that registry events are order by Node -> Port -> Link?
             match &message {
                 ChannelMessage::PipewireRegistryGlobal(object) => {
                     let object = &object.0;
@@ -409,6 +411,7 @@ impl eframe::App for NodeGraphExample {
                                 );
                                 self.state.node_order.push(new_node);
 
+                                // pesudo random graph node position
                                 let (x, y) = {
                                     use std::collections::hash_map::DefaultHasher;
                                     use std::hash::{Hash, Hasher};
@@ -419,7 +422,6 @@ impl eframe::App for NodeGraphExample {
                                     let (x, y) = ((hash >> 32) as f32, hash as u32 as f32);
                                     (x / (u32::MAX as f32) * 500.0, y / (u32::MAX as f32) * 500.0)
                                 };
-                                dbg!((x, y));
                                 self.state.node_positions.insert(new_node, egui::pos2(x, y));
                             }
                         }
@@ -456,7 +458,7 @@ impl eframe::App for NodeGraphExample {
         });
 
         //
-        // Core window
+        // core window
         //
 
         egui::Window::new("Core")
@@ -481,14 +483,14 @@ impl eframe::App for NodeGraphExample {
             });
 
         //
-        // Object window
+        // object window
         //
 
         egui::Window::new("Object")
             .open(&mut self.extra_state.window_object)
             .show(ctx, |ui| {
                 let text_height = egui::TextStyle::Body.resolve(ui.style()).size;
-                egui::ScrollArea::both().max_height(400.0).show(ui, |ui| {
+                egui::ScrollArea::both().show(ui, |ui| {
                     TableBuilder::new(ui)
                         .striped(true)
                         .column(Size::exact(20.0))
@@ -540,7 +542,7 @@ impl eframe::App for NodeGraphExample {
             });
 
         //
-        // Link create/destroy window
+        // link create/destroy window
         //
 
         egui::Window::new("Link")
