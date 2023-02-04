@@ -4,6 +4,7 @@ use eframe::egui::{self, DragValue, TextStyle};
 use egui_extras::{Size, TableBuilder};
 use egui_node_graph::*;
 
+use pipewire::types::ObjectType;
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -125,10 +126,10 @@ impl DataTypeTrait<MyGraphState> for MyDataType {
 // A trait for the node kinds, which tells the library how to build new nodes
 // from the templates in the node finder
 impl NodeTemplateTrait for MyNodeTemplate {
-    type NodeData = MyNodeData;
-    type DataType = MyDataType;
-    type ValueType = MyValueType;
-    type UserState = MyGraphState;
+    type NodeData = MyNodeData; // unit
+    type DataType = MyDataType; // midi or audio
+    type ValueType = MyValueType; // unit
+    type UserState = MyGraphState; // unit
 
     fn node_finder_label(&self, _user_state: &mut Self::UserState) -> Cow<'_, str> {
         Cow::Borrowed(match self {
@@ -311,50 +312,27 @@ impl NodeDataTrait for MyNodeData {
     type DataType = MyDataType;
     type ValueType = MyValueType;
 
-    // This method will be called when drawing each node. This allows adding
-    // extra ui elements inside the nodes. In this case, we create an "active"
-    // button which introduces the concept of having an active node in the
-    // graph. This is done entirely from user code with no modifications to the
-    // node graph library.
+    // TODO: titlebar layout looks broken without delete button
+    fn can_delete(
+        &self,
+        _node_id: NodeId,
+        _graph: &Graph<Self, Self::DataType, Self::ValueType>,
+        _user_state: &mut Self::UserState,
+    ) -> bool {
+        false
+    }
+
     fn bottom_ui(
         &self,
-        ui: &mut egui::Ui,
-        node_id: NodeId,
+        _ui: &mut egui::Ui,
+        _node_id: NodeId,
         _graph: &Graph<MyNodeData, MyDataType, MyValueType>,
-        user_state: &mut Self::UserState,
+        _user_state: &mut Self::UserState,
     ) -> Vec<NodeResponse<MyResponse, MyNodeData>>
     where
         MyResponse: UserResponseTrait,
     {
-        // This logic is entirely up to the user. In this case, we check if the
-        // current node we're drawing is the active one, by comparing against
-        // the value stored in the global user state, and draw different button
-        // UIs based on that.
-
-        let mut responses = vec![];
-        let is_active = user_state
-            .active_node
-            .map(|id| id == node_id)
-            .unwrap_or(false);
-
-        // Pressing the button will emit a custom user response to either set,
-        // or clear the active node. These responses do nothing by themselves,
-        // the library only makes the responses available to you after the graph
-        // has been drawn. See below at the update method for an example.
-        if !is_active {
-            if ui.button("👁 Set active").clicked() {
-                responses.push(NodeResponse::User(MyResponse::SetActiveNode(node_id)));
-            }
-        } else {
-            let button =
-                egui::Button::new(egui::RichText::new("👁 Active").color(egui::Color32::BLACK))
-                    .fill(egui::Color32::GOLD);
-            if ui.add(button).clicked() {
-                responses.push(NodeResponse::User(MyResponse::ClearActiveNode));
-            }
-        }
-
-        responses
+        Default::default()
     }
 }
 
@@ -370,6 +348,8 @@ pub struct NodeGraphExample {
     user_state: MyGraphState,
 
     pipewire_wrapper: PipewireWrapper,
+
+    pipewire_id_to_node_id: HashMap<u32, NodeId>,
 
     extra_state: ExtraState,
 }
@@ -391,6 +371,7 @@ impl NodeGraphExample {
             state: Default::default(),
             user_state: Default::default(),
             pipewire_wrapper: PipewireWrapper::new(),
+            pipewire_id_to_node_id: Default::default(),
             extra_state: cc
                 .storage
                 .and_then(|storage| eframe::get_value(storage, PERSISTENCE_KEY))
@@ -414,7 +395,92 @@ impl eframe::App for NodeGraphExample {
     /// Put your widgets into a `SidePanel`, `TopPanel`, `CentralPanel`, `Window` or `Area`.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         while let Ok(message) = self.pipewire_wrapper.channel_receiver.try_recv() {
-            dbg!(message);
+            dbg!(&message);
+            // TODO: is it guarnateed that registry events are order by Node -> Port -> Link?
+            match &message {
+                ChannelMessage::PipewireRegistryGlobal(object) => {
+                    let object = &object.0;
+                    match object.type_ {
+                        ObjectType::Node => {
+                            if let Some((_, name)) = PipewireObject::get_name(object) {
+                                let node_id = self.state.graph.add_node(
+                                    name.to_owned(),
+                                    MyNodeData {
+                                        template: MyNodeTemplate::AddScalar,
+                                    },
+                                    |_graph, _node_id| {
+                                        // node_kind.build_node(graph, user_state, node_id)
+                                    },
+                                );
+                                self.pipewire_id_to_node_id.insert(object.id, node_id);
+
+                                self.state.node_order.push(node_id);
+
+                                // pesudo random graph node position
+                                let (x, y) = {
+                                    use std::collections::hash_map::DefaultHasher;
+                                    use std::hash::{Hash, Hasher};
+
+                                    let mut hasher = DefaultHasher::new();
+                                    name.hash(&mut hasher);
+                                    let hash = hasher.finish();
+                                    let (x, y) = ((hash >> 32) as f32, hash as u32 as f32);
+                                    (x / (u32::MAX as f32) * 500.0, y / (u32::MAX as f32) * 500.0)
+                                };
+                                self.state.node_positions.insert(node_id, egui::pos2(x, y));
+                            }
+                        }
+                        ObjectType::Port => {
+                            || -> Option<()> {
+                                let pipewire_id: u32 =
+                                    PipewireObject::get_prop(object, *pipewire::keys::NODE_ID)?
+                                        .parse()
+                                        .ok()?;
+                                let &node_id = self.pipewire_id_to_node_id.get(&pipewire_id)?;
+                                let (_, port_name) = PipewireObject::get_name(object)?;
+                                let port_direction = PipewireObject::get_prop(
+                                    object,
+                                    *pipewire::keys::PORT_DIRECTION,
+                                )?;
+                                match port_direction {
+                                    "in" => {
+                                        let _input_id = self.state.graph.add_input_param(
+                                            node_id,
+                                            port_name.to_string(),
+                                            MyDataType::Scalar,
+                                            MyValueType::Scalar { value: 0.0 },
+                                            InputParamKind::ConnectionOnly,
+                                            true,
+                                        );
+                                    }
+                                    "out" => {
+                                        let _output_id = self.state.graph.add_output_param(
+                                            node_id,
+                                            port_name.to_string(),
+                                            MyDataType::Scalar,
+                                        );
+                                    }
+                                    _ => {}
+                                };
+                                Some(())
+                            }()
+                            .unwrap_or_else(|| {
+                                tracing::error!("invalid port {:?}", object);
+                            });
+                        }
+                        ObjectType::Link => {
+                            // self.state.graph.add_connection(output, input);
+                            // self.state.graph.add_node(label, user_data, f)
+                        }
+                        _ => {}
+                    }
+                }
+                ChannelMessage::PipewireRegistryGlobalRemove(_id) => {
+                    // self.state.graph.remove_node(node_id);
+                    // self.state.graph.remove_connection(input_id);
+                }
+                _ => {}
+            }
         }
 
         //
@@ -431,7 +497,7 @@ impl eframe::App for NodeGraphExample {
         });
 
         //
-        // Core window
+        // core window
         //
 
         egui::Window::new("Core")
@@ -456,14 +522,14 @@ impl eframe::App for NodeGraphExample {
             });
 
         //
-        // Object window
+        // object window
         //
 
         egui::Window::new("Object")
             .open(&mut self.extra_state.window_object)
             .show(ctx, |ui| {
                 let text_height = egui::TextStyle::Body.resolve(ui.style()).size;
-                egui::ScrollArea::both().max_height(400.0).show(ui, |ui| {
+                egui::ScrollArea::both().show(ui, |ui| {
                     TableBuilder::new(ui)
                         .striped(true)
                         .column(Size::exact(20.0))
@@ -515,7 +581,7 @@ impl eframe::App for NodeGraphExample {
             });
 
         //
-        // Link create/destroy window
+        // link create/destroy window
         //
 
         egui::Window::new("Link")
@@ -627,14 +693,14 @@ impl eframe::App for NodeGraphExample {
             })
             .inner;
         for node_response in graph_response.node_responses {
-            // Here, we ignore all other graph events. But you may find
-            // some use for them. For example, by playing a sound when a new
-            // connection is created
-            if let NodeResponse::User(user_event) = node_response {
-                match user_event {
+            match node_response {
+                NodeResponse::ConnectEventStarted(..) => {}
+                NodeResponse::ConnectEventEnded { .. } => {}
+                NodeResponse::User(user_event) => match user_event {
                     MyResponse::SetActiveNode(node) => self.user_state.active_node = Some(node),
                     MyResponse::ClearActiveNode => self.user_state.active_node = None,
-                }
+                },
+                _ => {}
             }
         }
 
