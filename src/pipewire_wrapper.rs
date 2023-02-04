@@ -74,6 +74,7 @@ impl PipewireWrapper {
         pipewire::init();
 
         // TODO: macro trick to reduce `xxx.clone()` patterns?
+        // https://github.com/oliver-giersch/closure
 
         let (ui_sender, pw_receiver) = mpsc::channel::<ChannelMessage>();
         let (pw_sender, ui_receiver) = mpsc::channel::<ChannelMessage>();
